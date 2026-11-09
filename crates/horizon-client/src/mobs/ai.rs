@@ -755,6 +755,11 @@ pub fn tick(
             // Pufferfish.aiStep's mob contacts run even when serverAiStep is skipped.
             aquatic::sting_touching_mobs(m, w, events);
         }
+        // Squid.aiStep runs from LivingEntity.tick without gating on NoAI;
+        // out of water it calculates sinking velocity and air drag.
+        if matches!(m.species(), Species::Squid | Species::GlowSquid) {
+            aquatic::squid_ai_step(m);
+        }
         if m.species() == Species::GlowSquid {
             aquatic::glow_squid_dark_tick(m);
         }

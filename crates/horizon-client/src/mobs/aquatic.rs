@@ -429,7 +429,7 @@ pub(super) fn sting_touching_mobs(m: &mut Mob, w: &MobWorld, events: &mut Vec<Mo
 }
 
 /// Squid.aiStep: tentacle cycle, propulsion and body rotation.
-fn squid_ai_step(m: &mut Mob) {
+pub(crate) fn squid_ai_step(m: &mut Mob) {
     squid_step(m, false);
 }
 
@@ -1647,6 +1647,30 @@ mod pufferfish_sting_tests {
             vec![true, false],
             "a survival player puffs it; a spectator does not"
         );
+    }
+
+    #[test]
+    fn no_ai_squid_on_land_sets_sinking_velocity() {
+        with_test_world(&[], |w, types| {
+            for id in ["minecraft:squid", "minecraft:glow_squid"] {
+                let mut squid = Mob::new(
+                    1,
+                    Arc::new(types.types[id].clone()),
+                    Vec3::new(8.5, 230.0, 8.5),
+                    0.0,
+                );
+                squid.no_ai = true;
+                squid.persistent = true;
+                let mut events = Vec::new();
+                assert!(squid.tick(w, &mut LegacyRandom::new(0), &mut events));
+                // Squid.aiStep out of water: yd = (0.0 - 0.08) * 0.98 = -0.0784
+                assert!(
+                    (squid.velocity.y - (-0.0784)).abs() < 1e-6,
+                    "{id}: unexpected velocity {:?}",
+                    squid.velocity
+                );
+            }
+        });
     }
 }
 
