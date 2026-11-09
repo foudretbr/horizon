@@ -746,32 +746,18 @@ pub fn tick(
         // a NoAI enderman's or shulker's hurts still teleport it (hurtServer).
         hurt_by_water(m, w, events);
         hurt_teleports(m, w, events);
-        // Ravager.aiStep runs outside serverAiStep: NoAI still advances
-        // attack/stun/roar, including the stun-to-roar transition.
-        if m.species() == Species::Ravager {
-            super::ravager::ai_step(m, w, events);
-        }
-        if m.species() == Species::Pufferfish {
-            // Pufferfish.aiStep's mob contacts run even when serverAiStep is skipped.
-            aquatic::sting_touching_mobs(m, w, events);
-        }
-        // Squid.aiStep runs from LivingEntity.tick without gating on NoAI;
-        // out of water it calculates sinking velocity and air drag.
-        if matches!(m.species(), Species::Squid | Species::GlowSquid) {
-            aquatic::squid_ai_step(m);
-        }
-        if m.species() == Species::GlowSquid {
-            aquatic::glow_squid_dark_tick(m);
-        }
-        // Shulker.tick after its living tick: a NoAI shell still keeps a
-        // face and eases its lid, pushing what the lid opens into.
-        if m.species() == Species::Shulker {
-            super::shulker::shell_tick(m, w, events);
-        }
-        // TraderLlama.aiStep still calls maybeDespawn after its super step.
-        // Keep unrelated llama healing and its random draw in the AI path.
-        if m.species() == Species::TraderLlama {
-            super::caravan::trader_llama_tick(m, w);
+        match m.species() {
+            Species::Ravager => super::ravager::ai_step(m, w, events),
+            Species::Pufferfish => aquatic::sting_touching_mobs(m, w, events),
+            // Squid.aiStep runs without gating on NoAI (sinking velocity and drag).
+            Species::Squid => aquatic::squid_ai_step(m),
+            Species::GlowSquid => {
+                aquatic::squid_ai_step(m);
+                aquatic::glow_squid_dark_tick(m);
+            }
+            Species::Shulker => super::shulker::shell_tick(m, w, events),
+            Species::TraderLlama => super::caravan::trader_llama_tick(m, w),
+            _ => {}
         }
     } else {
         ai_step(m, w, level_random, events);
