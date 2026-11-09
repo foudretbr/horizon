@@ -528,8 +528,8 @@ fn vanilla_part(model: &str, part: &str) -> String {
         ("puffer_fish_big" | "puffer_fish_medium", "fin_right") => Some("right_blue_fin".into()),
         ("puffer_fish_big" | "puffer_fish_medium", "fin_left") => Some("left_blue_fin".into()),
         // RabbitModel's hind feet (rabbit.rs).
-        ("rabbit", "left_foot") => Some("left_hind_foot".into()),
-        ("rabbit", "right_foot") => Some("right_hind_foot".into()),
+        ("rabbit", "left_foot") => Some("left_hind_leg".into()),
+        ("rabbit", "right_foot") => Some("right_hind_leg".into()),
         (_, "fin_right") => Some("right_fin".into()),
         (_, "fin_left") => Some("left_fin".into()),
         (_, "fin_bottom") => Some("bottom_fin".into()),
@@ -773,7 +773,7 @@ mod tests {
             ("squid", "tentacle0", "tentacle0"),
             ("puffer_fish_medium", "fin_left", "left_blue_fin"),
             ("puffer_fish_small", "fin_right", "right_fin"),
-            ("rabbit", "left_foot", "left_hind_foot"),
+            ("rabbit", "left_foot", "left_hind_leg"),
         ] {
             assert_eq!(vanilla_part(model, part), vanilla, "{model} {part}");
         }
@@ -1277,11 +1277,19 @@ mod tests {
                 continue;
             };
             let adult_key = format!("{adult}#{layer}");
-            let reached = LAYERS
+            let adult_names: Vec<_> = LAYERS
                 .iter()
                 .map(|(name, _)| *name)
                 .chain([adult])
                 .filter(|name| layer_key(name) == adult_key)
+                .collect();
+            if adult_names.is_empty() {
+                // Armour / equipment layers (helmet, chestplate, leggings, boots) are not
+                // customizable entity model layers in CEM: they have no adult model name.
+                continue;
+            }
+            let reached = adult_names
+                .into_iter()
                 .flat_map(baby_names)
                 .any(|baby| layer_key(&baby) == *key);
             if !reached {
