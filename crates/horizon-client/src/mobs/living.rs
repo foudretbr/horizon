@@ -145,7 +145,10 @@ impl MobWorld<'_> {
     }
     /// Entity.updateFluidHeightAndDoFluidPushing heights over the deflated box.
     pub fn fluids(&self, bounds: Aabb, eye_y: f64) -> Fluids {
-        let b = bounds.deflate(Vec3::new(0.001, 0.001, 0.001));
+        self.fluids_in_box(bounds.deflate(Vec3::new(0.001, 0.001, 0.001)), eye_y)
+    }
+    /// `Entity.updateFluidHeightAndDoFluidPushing` heights over an already modified/deflated box.
+    pub fn fluids_in_box(&self, b: Aabb, eye_y: f64) -> Fluids {
         let (lo, hi) = (b.min_position(), b.max_position());
         let mut out = Fluids::default();
         // The eye column below, in the box but for a box thinner than the
@@ -1001,7 +1004,10 @@ impl Mob {
     /// resets the fall and entering it (after the first tick) splashes.
     pub(super) fn update_fluids(&mut self, w: &MobWorld, events: &mut Vec<MobEvent>) {
         let was_touching_water = self.fluids.in_water;
-        self.fluids = w.fluids(self.bounds(), self.eye_y());
+        self.fluids = match self.fluid_interaction_box() {
+            Some(box_) => w.fluids_in_box(box_, self.eye_y()),
+            None => Fluids::default(),
+        };
         // EntityFluidInteraction.applyCurrentTo: the flow pushes the mob.
         if (self.fluids.in_water || self.fluids.in_lava) && self.pushed_by_fluid() {
             let (water, lava) = w.fluid_currents(self.bounds(), None);

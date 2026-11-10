@@ -1175,3 +1175,47 @@ fn a_steered_mount_moves_through_the_air_at_a_tenth_of_its_speed() {
     m.extra.saddled = true;
     assert_eq!(m.flying_speed(), 0.3_f32 * 0.1);
 }
+
+/// `Entity.getFluidInteractionBox` and `AbstractBoat.modifyPassengerFluidInteractionBox`:
+/// a mob sitting in a floating boat on water only interacts with fluids above the boat's
+/// waterline (maxY), so its legs dipping below do not make it count as `in_water`. A sunken
+/// boat or dismounting preserves full bounds.
+#[test]
+fn mob_boat_passenger_fluid_interaction_box() {
+    let mut m = Mob::new(
+        1,
+        crate::mobs::sensor_scan_tests::kind(),
+        Vec3::new(0.0, 10.0, 0.0),
+        0.0,
+    );
+    let deflated = m.bounds().deflate(Vec3::new(0.001, 0.001, 0.001));
+    assert_eq!(m.fluid_interaction_box(), Some(deflated));
+
+    // Floating boat: waterline at 10.5 clips the lower interaction bounds to 10.5.
+    m.extra.boat = Some(crate::motion::RiddenBoat {
+        under_water: false,
+        max_y: 10.5,
+    });
+    let clipped = m.fluid_interaction_box().expect("clipped box");
+    assert!((clipped.min_position().y - 10.5).abs() < 1.0e-6);
+    assert_eq!(clipped.max_position().y, deflated.max_position().y);
+
+    // Deep boat covering passenger's head shelters the entire mob.
+    m.extra.boat = Some(crate::motion::RiddenBoat {
+        under_water: false,
+        max_y: deflated.max_position().y + 1.0,
+    });
+    assert_eq!(m.fluid_interaction_box(), None);
+
+    // Sunken boat restores interaction with water over the full entity box.
+    m.extra.boat = Some(crate::motion::RiddenBoat {
+        under_water: true,
+        max_y: 10.5,
+    });
+    assert_eq!(m.fluid_interaction_box(), Some(deflated));
+
+    // Seated resets boat info.
+    m.seated(42, 0.5, Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0)));
+    assert_eq!(m.extra.boat, None);
+    assert_eq!(m.fluid_interaction_box(), Some(deflated));
+}

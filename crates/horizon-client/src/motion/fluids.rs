@@ -95,7 +95,7 @@ pub struct PlayerFluids {
     pub boat: Option<RiddenBoat>,
 }
 /// What `AbstractBoat.modifyPassengerFluidInteractionBox` reads of a boat.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RiddenBoat {
     /// `AbstractBoat.isUnderWater`.
     pub under_water: bool,

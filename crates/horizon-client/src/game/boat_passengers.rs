@@ -315,6 +315,10 @@ impl Game<'_> {
                         horizon_client::mobs::shulker::on_start_riding(m);
                         m.extra.mount = Some(id);
                         m.extra.passenger = true;
+                        m.extra.boat = Some(crate::motion::RiddenBoat {
+                            under_water: self.boats[i].under_water(),
+                            max_y: self.boats[i].bounds().max_position().y,
+                        });
                         m.ai.nav.stop();
                         count += 1;
                         // Mob.startRiding drops its lead.
@@ -454,9 +458,14 @@ impl Game<'_> {
                     )
                 })
                 .collect();
+            let boat_ridden = crate::motion::RiddenBoat {
+                under_water: b.under_water(),
+                max_y: boat_box.max_position().y,
+            };
             for (j, offset, at, previous, facing) in seats {
                 let m = &mut self.mobs[j];
                 m.seated(id, offset, boat_box);
+                m.extra.boat = Some(boat_ridden);
                 m.position = at;
                 m.previous = previous;
                 m.velocity = Vec3::ZERO;
@@ -495,6 +504,7 @@ impl Game<'_> {
             let m = &mut self.mobs[j];
             m.extra.mount = None;
             m.extra.passenger = false;
+            m.extra.boat = None;
             m.extra.boarding_cooldown = BOARDING_COOLDOWN;
             m.position = at;
             m.previous = at;

@@ -6896,10 +6896,7 @@ impl Game<'_> {
         // A frozen level ticks only the players, as below.
         // Entity.isInRain for the wolves, which dry off by their own `Wolf.tick`.
         let (mut fluids, mut rain, mut standings, mut water_fx) = {
-            let r = self
-                .remote
-                .as_mut()
-                .expect("remote entity tick without remote state");
+            let r = self.remote.as_mut().expect("remote tick without state");
             (
                 std::mem::take(&mut r.tick_fluids),
                 std::mem::take(&mut r.tick_rain),
@@ -6912,8 +6909,11 @@ impl Game<'_> {
             let players = self.remote.as_ref().map(|r| &r.level_players);
             fluids.clear();
             fluids.extend(self.mobs.iter().map(|m| {
-                (running || players.is_some_and(|p| p.contains_key(&(m.id as i32))))
-                    .then(|| w.fluids(m.bounds(), m.eye_y()))
+                (running || players.is_some_and(|p| p.contains_key(&(m.id as i32)))).then(|| {
+                    m.fluid_interaction_box()
+                        .map(|b| w.fluids_in_box(b, m.eye_y()))
+                        .unwrap_or_default()
+                })
             }));
             rain.clear();
             rain.extend(self.mobs.iter().map(|m| {

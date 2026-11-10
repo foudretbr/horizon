@@ -123,6 +123,7 @@ impl Game<'_> {
                 let m = &mut self.mobs[i];
                 m.extra.mount = None;
                 m.extra.passenger = false;
+                m.extra.boat = None;
             }
         }
         for m in &mut self.mobs {

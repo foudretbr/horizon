@@ -1336,6 +1336,8 @@ pub struct Extra {
     /// attachment (`getPassengerRidingPosition(this).y` is its feet plus this)
     /// and the vehicle's box (`Mob.getAttackBoundingBox`, `getHitbox`).
     pub seat: Option<(u32, f64, Aabb)>,
+    /// The boat this mob rides (`AbstractBoat.modifyPassengerFluidInteractionBox`).
+    pub boat: Option<crate::motion::RiddenBoat>,
     /// The living vehicle `positionRider` last seated this rider on, with
     /// its `yBodyRotO` and `yBodyRot`: a rider of a living vehicle is drawn
     /// from that body (`LivingEntityRenderer.solveBodyRot`), not its own.
@@ -1438,10 +1440,10 @@ impl Extra {
 /// and fire resistance.
 fn totem_death_effects() -> Vec<crate::items::ConsumeEffect> {
     use crate::items::{ConsumeEffect, ConsumeEffectSpec};
-    let spec = |id: &str, duration, amplifier| ConsumeEffectSpec {
+    let s = |id: &str, d, a| ConsumeEffectSpec {
         id: id.to_owned(),
-        duration,
-        amplifier,
+        duration: d,
+        amplifier: a,
         ambient: false,
         show_particles: true,
         show_icon: true,
@@ -1450,9 +1452,9 @@ fn totem_death_effects() -> Vec<crate::items::ConsumeEffect> {
         ConsumeEffect::ClearAllEffects,
         ConsumeEffect::ApplyEffects {
             effects: vec![
-                spec("minecraft:regeneration", 900, 1),
-                spec("minecraft:absorption", 100, 1),
-                spec("minecraft:fire_resistance", 800, 0),
+                s("minecraft:regeneration", 900, 1),
+                s("minecraft:absorption", 100, 1),
+                s("minecraft:fire_resistance", 800, 0),
             ],
             probability: 1.0,
         },
@@ -1475,13 +1477,10 @@ impl BoxReach {
         mobs.iter().fold(Self::default(), |r, m| {
             let (b, p) = (m.bounds(), m.position);
             let (lo, hi) = (b.min_position(), b.max_position());
+            let dx = (p.x - lo.x).max(hi.x - p.x);
+            let dz = (p.z - lo.z).max(hi.z - p.z);
             Self {
-                half_width: r
-                    .half_width
-                    .max(p.x - lo.x)
-                    .max(hi.x - p.x)
-                    .max(p.z - lo.z)
-                    .max(hi.z - p.z),
+                half_width: r.half_width.max(dx.max(dz)),
                 below: r.below.max(p.y - lo.y),
                 height: r.height.max(hi.y - p.y),
             }
@@ -1492,12 +1491,9 @@ impl BoxReach {
     #[inline]
     pub fn may_meet(self, m: &Mob, area: Aabb) -> bool {
         let (lo, hi, p) = (area.min_position(), area.max_position(), m.position);
-        p.x - self.half_width <= hi.x
-            && p.x + self.half_width >= lo.x
-            && p.z - self.half_width <= hi.z
-            && p.z + self.half_width >= lo.z
-            && p.y - self.below <= hi.y
-            && p.y + self.height >= lo.y
+        (p.x - self.half_width <= hi.x && p.x + self.half_width >= lo.x)
+            && (p.z - self.half_width <= hi.z && p.z + self.half_width >= lo.z)
+            && (p.y - self.below <= hi.y && p.y + self.height >= lo.y)
     }
 }
 
@@ -3520,22 +3516,22 @@ impl Mob {
     /// (`vehicle.getPassengerRidingPosition(this).y`).
     pub fn hitbox(&self) -> Aabb {
         let b = self.bounds();
-        match self.extra.seat.filter(|s| self.extra.mount == Some(s.0)) {
-            Some((_, offset, _)) => {
-                let (lo, hi) = (b.min_position(), b.max_position());
-                let y = (self.position.y + offset).max(lo.y);
-                Aabb::new(Vec3::new(lo.x, y, lo.z), hi)
-            }
-            None => b,
-        }
+        let Some((_, offset, _)) = self.extra.seat.filter(|s| self.extra.mount == Some(s.0)) else {
+            return b;
+        };
+        let (lo, hi) = (b.min_position(), b.max_position());
+        Aabb::new(
+            Vec3::new(lo.x, (self.position.y + offset).max(lo.y), lo.z),
+            hi,
+        )
     }
     /// `Mob.getAttackBoundingBox(range)`: its box, widened to its vehicle's
     /// (`vehicle`, when it rides) on x and z, grown by `range` on x and z.
     pub fn attack_box(&self, range: f64, vehicle: Option<Aabb>) -> Aabb {
         let b = self.bounds();
         let (mut lo, mut hi) = (b.min_position(), b.max_position());
-        if let Some(vehicle) = vehicle.filter(|_| self.extra.mount.is_some()) {
-            let (vlo, vhi) = (vehicle.min_position(), vehicle.max_position());
+        if let Some(v) = vehicle.filter(|_| self.extra.mount.is_some()) {
+            let (vlo, vhi) = (v.min_position(), v.max_position());
             lo = Vec3::new(lo.x.min(vlo.x), lo.y, lo.z.min(vlo.z));
             hi = Vec3::new(hi.x.max(vhi.x), hi.y, hi.z.max(vhi.z));
         }
@@ -3545,6 +3541,17 @@ impl Mob {
     /// and the vehicle's box, good while it rides that vehicle.
     pub fn seated(&mut self, id: u32, offset: f64, vehicle: Aabb) {
         self.extra.seat = Some((id, offset, vehicle));
+        self.extra.boat = None;
+    }
+    /// `Entity.getFluidInteractionBox`: the deflated box (by 0.001), then
+    /// modified by the vehicle (`AbstractBoat.modifyPassengerFluidInteractionBox`).
+    pub fn fluid_interaction_box(&self) -> Option<Aabb> {
+        let b = self.bounds().deflate(Vec3::new(0.001, 0.001, 0.001));
+        let Some(boat) = self.extra.boat.filter(|b| !b.under_water) else {
+            return Some(b);
+        };
+        let (lo, hi) = (b.min_position(), b.max_position());
+        (boat.max_y < hi.y).then(|| Aabb::new(Vec3::new(lo.x, lo.y.max(boat.max_y), lo.z), hi))
     }
     pub fn bounds(&self) -> Aabb {
         self.bounds_at(self.position)
@@ -3558,14 +3565,10 @@ impl Mob {
         // `width()` and `height()` in one `dims()`: every box asked for (each
         // collision, push and cart test) read the whole size twice.
         let (width, height, _) = self.dims();
-        let w = f64::from(width as f32) / 2.0;
+        let (w, h) = (f64::from(width as f32) / 2.0, f64::from(height as f32));
         Aabb::new(
             Vec3::new(position.x - w, position.y, position.z - w),
-            Vec3::new(
-                position.x + w,
-                position.y + f64::from(height as f32),
-                position.z + w,
-            ),
+            Vec3::new(position.x + w, position.y + h, position.z + w),
         )
     }
     /// `CombatTracker.recordDamage`: a hit that took `damage` health, with
@@ -3620,10 +3623,7 @@ impl Mob {
         from: Option<[f64; 3]>,
         _random: &mut LegacyRandom,
     ) -> bool {
-        let source = match from {
-            Some(f) => Damage::player(f),
-            None => Damage::of(DamageKind::Generic),
-        };
+        let source = from.map_or_else(|| Damage::of(DamageKind::Generic), Damage::player);
         self.damage(amount, source)
     }
     /// LivingEntity.hurtServer: invulnerability frames, armor, knockback and
