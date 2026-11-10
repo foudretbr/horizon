@@ -1175,3 +1175,79 @@ fn a_steered_mount_moves_through_the_air_at_a_tenth_of_its_speed() {
     m.extra.saddled = true;
     assert_eq!(m.flying_speed(), 0.3_f32 * 0.1);
 }
+
+/// `Entity.getFluidInteractionBox` and `AbstractBoat.modifyPassengerFluidInteractionBox`:
+/// a mob sitting in a floating boat on water does not count as in the water,
+/// avoiding day-burning cancellation, splash upon boarding, or fluid push (#14650).
+#[test]
+fn a_mob_in_a_floating_boat_does_not_count_as_in_water() {
+    crate::mobs::world::with_built_test_world(
+        &[],
+        |world, registry| {
+            world.chunks.insert(
+                (0, 0),
+                std::sync::Arc::new(crate::chunk::Chunk::empty(0, 0)),
+            );
+            let water = registry.default_state("minecraft:water").unwrap();
+            world.set(0, 63, 0, water).unwrap();
+        },
+        |w, types| {
+            let kind = std::sync::Arc::new(types.types["minecraft:drowned"].clone());
+            // Position mob so its feet are at y = 63.6 (inside water at block 63, where water top is ~63.88).
+            let mut mob = Mob::new(1, kind, Vec3::new(0.5, 63.6, 0.5), 0.0);
+            let mut events = Vec::new();
+
+            // Without a boat, the drowned's bounds intersect water, so fluids.in_water is true.
+            mob.update_fluids(w, &mut events);
+            assert!(
+                mob.fluids.in_water,
+                "unmounted drowned in water counts as in_water"
+            );
+
+            // In a floating boat with rim at y = 64.0125 (above water level ~63.88):
+            let boat_id = 99;
+            mob.extra.mount = Some(boat_id);
+            let floating_boat = (
+                boat_id,
+                crate::mobs::leash::HolderState {
+                    position: Vec3::new(0.5, 63.45, 0.5),
+                    center: Vec3::new(0.5, 63.73, 0.5),
+                    width: 1.375,
+                    height: 0.5625,
+                    yaw: 0.0,
+                    velocity: Vec3::ZERO,
+                    under_water: false,
+                },
+            );
+            let floating_boats = [floating_boat];
+            let w_floating = MobWorld {
+                leash_boats: &floating_boats,
+                ..w.clone()
+            };
+            mob.update_fluids(&w_floating, &mut events);
+            assert!(
+                !mob.fluids.in_water,
+                "floating boat protects passenger from counting in water"
+            );
+
+            // In a submerged boat (under_water: true), the passenger counts in water as in vanilla.
+            let submerged_boat = (
+                boat_id,
+                crate::mobs::leash::HolderState {
+                    under_water: true,
+                    ..floating_boat.1
+                },
+            );
+            let submerged_boats = [submerged_boat];
+            let w_submerged = MobWorld {
+                leash_boats: &submerged_boats,
+                ..w.clone()
+            };
+            mob.update_fluids(&w_submerged, &mut events);
+            assert!(
+                mob.fluids.in_water,
+                "submerged boat counts passenger in water"
+            );
+        },
+    );
+}

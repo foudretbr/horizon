@@ -49,6 +49,7 @@ pub(super) fn boat_state(b: &Boat) -> (u32, HolderState) {
             height: f64::from(HEIGHT),
             yaw: b.yaw,
             velocity: b.velocity,
+            under_water: b.under_water(),
         },
     )
 }
@@ -95,6 +96,7 @@ impl Game<'_> {
                             height: hi.y - lo.y,
                             yaw: g.yaw,
                             velocity: Vec3::new(moved[0], moved[1], moved[2]),
+                            under_water: false,
                         },
                         false,
                     );
@@ -119,6 +121,7 @@ impl Game<'_> {
                         height: size.y,
                         yaw: v.yaw,
                         velocity: v.velocity,
+                        under_water: false,
                     },
                     false,
                 )
@@ -140,6 +143,7 @@ impl Game<'_> {
                         height: hi.y - lo.y,
                         yaw: m.yaw,
                         velocity: m.velocity,
+                        under_water: false,
                     },
                     leash::quad_holder_offsets(m).is_some(),
                 )

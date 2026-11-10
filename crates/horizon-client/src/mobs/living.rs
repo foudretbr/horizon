@@ -1001,10 +1001,17 @@ impl Mob {
     /// resets the fall and entering it (after the first tick) splashes.
     pub(super) fn update_fluids(&mut self, w: &MobWorld, events: &mut Vec<MobEvent>) {
         let was_touching_water = self.fluids.in_water;
-        self.fluids = w.fluids(self.bounds(), self.eye_y());
+        let bounds = self.fluid_interaction_box(w);
+        self.fluids = match bounds {
+            Some(b) => w.fluids(b, self.eye_y()),
+            None => Fluids::default(),
+        };
         // EntityFluidInteraction.applyCurrentTo: the flow pushes the mob.
-        if (self.fluids.in_water || self.fluids.in_lava) && self.pushed_by_fluid() {
-            let (water, lava) = w.fluid_currents(self.bounds(), None);
+        if (self.fluids.in_water || self.fluids.in_lava)
+            && self.pushed_by_fluid()
+            && let Some(b) = bounds
+        {
+            let (water, lava) = w.fluid_currents(b, None);
             let lava_scale = if w.dimension_type.fast_lava {
                 0.007
             } else {
@@ -1022,8 +1029,11 @@ impl Mob {
         // scales the fall distance by its `fallDistanceModifier`.
         if let Some(m) = self.fluids.modded {
             let numbers = m.fluid.info().entity;
-            if numbers.can_push && self.pushed_by_fluid() {
-                let (current, _) = w.fluid_currents(self.bounds(), Some(m.fluid));
+            if numbers.can_push
+                && self.pushed_by_fluid()
+                && let Some(b) = bounds
+            {
+                let (current, _) = w.fluid_currents(b, Some(m.fluid));
                 let _ = current.apply_to(&mut Pushed(&mut self.velocity), numbers.motion_scale);
             }
             self.fall_distance *= f64::from(numbers.fall_distance_modifier);
@@ -1039,6 +1049,26 @@ impl Mob {
                 );
             }
         }
+    }
+    /// `Entity.getFluidInteractionBox`: the deflated box, or modified by the
+    /// ridden boat (`AbstractBoat.modifyPassengerFluidInteractionBox`).
+    fn fluid_interaction_box(&self, w: &MobWorld) -> Option<Aabb> {
+        let bounds = self.bounds();
+        let Some(mount) = self.extra.mount else {
+            return Some(bounds);
+        };
+        let Some((_, boat)) = w.leash_boats.iter().find(|(id, _)| *id == mount) else {
+            return Some(bounds);
+        };
+        if boat.under_water {
+            return Some(bounds);
+        }
+        let top = boat.position.y + boat.height;
+        let (lo, hi) = (bounds.min_position(), bounds.max_position());
+        if top >= hi.y {
+            return None;
+        }
+        Some(Aabb::new(Vec3::new(lo.x, lo.y.max(top), lo.z), hi))
     }
     /// Entity.applyMovementEmissionAndPlaySound: walked distance, footsteps
     /// and swimming sounds.

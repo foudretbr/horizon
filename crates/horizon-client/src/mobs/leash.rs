@@ -62,6 +62,7 @@ pub struct HolderState {
     pub height: f64,
     pub yaw: f32,
     pub velocity: Vec3,
+    pub under_water: bool,
 }
 /// `LeashFenceKnotEntity`: 0.375 wide, 0.5 tall, centred a block's 0.375 up.
 pub fn knot_state(pos: [i32; 3]) -> HolderState {
@@ -77,6 +78,7 @@ pub fn knot_state(pos: [i32; 3]) -> HolderState {
         height: 0.5,
         yaw: 0.0,
         velocity: Vec3::ZERO,
+        under_water: false,
     }
 }
 /// The holder's state, or `None` when it is gone.
@@ -92,6 +94,7 @@ pub fn holder_state(w: &MobWorld, holder: Holder) -> Option<HolderState> {
                 height: size.y,
                 yaw: p.yaw,
                 velocity: p.velocity,
+                under_water: false,
             })
         }
         Holder::Mob(id) => {
@@ -109,6 +112,7 @@ pub fn holder_state(w: &MobWorld, holder: Holder) -> Option<HolderState> {
                 height: hi.y - lo.y,
                 yaw: s.yaw,
                 velocity: s.velocity,
+                under_water: false,
             })
         }
         Holder::Boat(id) => w
@@ -1025,6 +1029,7 @@ mod tests {
             height: 1.8,
             yaw: 0.0,
             velocity: Vec3::ZERO,
+            under_water: false,
         }
     }
     #[test]
