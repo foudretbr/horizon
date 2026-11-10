@@ -9,6 +9,8 @@ use std::{path::Path, sync::Mutex};
 
 type HookFn = Box<dyn Fn(&str, [i32; 2], i64, bool, &mut NativeLodColumn<'_>) + Send + Sync>;
 static CURRENT_HOOK: Mutex<Option<HookFn>> = Mutex::new(None);
+/// The hook is process-wide: tests that replace it run one at a time.
+static SERIAL: Mutex<()> = Mutex::new(());
 
 fn ensure_hooks_installed() {
     let _ = native_generate::install(NativeGenerateHooks {
@@ -43,6 +45,7 @@ fn load_test_generator() -> Option<(std::sync::Arc<GeneratorData>, OverworldGene
 
 #[test]
 fn native_lod_column_replaces_grid_before_vanilla_evaluation() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     ensure_hooks_installed();
     assert!(native_generate::has_lod_column_hook());
 
@@ -128,6 +131,7 @@ fn native_lod_column_replaces_grid_before_vanilla_evaluation() {
 
 #[test]
 fn surface_sample_and_column_consult_hook_first() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     ensure_hooks_installed();
 
     let Some((data, generator)) = load_test_generator() else {
