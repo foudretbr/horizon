@@ -2,6 +2,7 @@
 //! with `all`), against the vanilla data the menu tests use.
 use crate::menu::{
     Kind, Menu,
+    place::PostPlace,
     tests::{mod_crafting_table, stack, with_menu},
 };
 
@@ -124,5 +125,42 @@ fn a_transfer_of_all_fills_as_many_sets_as_the_items_allow() {
         assert_eq!(all, vec![some("oak_planks", 4).unwrap(); 3]);
         assert_eq!(station.player_item(0), None);
         assert_eq!(station.sources, vec![vec![stack("oak_planks", 2)]]);
+    });
+}
+
+/// A recipe viewer transfer allows damaged, enchanted, or renamed ingredients,
+/// matching manual crafting behaviour, whereas recipe book auto-crafting
+/// filters them out via `usable_for_crafting` (#14652).
+#[test]
+fn a_viewer_transfer_moves_worn_enchanted_and_renamed_ingredients() {
+    with_menu(Kind::Inventory, |env, menu| {
+        let mut rod = stack("fishing_rod", 1).expect("fishing rod stack");
+        rod.damage = 40;
+        rod.data_mut()
+            .enchantments
+            .push(("minecraft:unbreaking".into(), 1));
+        rod.data_mut().custom_name = Some(horizon_world::nbt::Tag::String("Lucky Rod".into()));
+        menu.set_player_item(0, Some(rod));
+        menu.set_player_item(1, stack("carrot", 1));
+
+        // Recipe book auto-crafting refuses damaged/enchanted/named ingredients.
+        let post = menu.place_recipe(env, "minecraft:carrot_on_a_stick", false, false, None);
+        assert_eq!(post, PostPlace::Ghost);
+        assert_eq!(menu.player_item(0).map(|s| s.damage), Some(40));
+
+        // Recipe viewer transfer accepts worn, enchanted, and renamed items.
+        assert_eq!(
+            menu.transfer_recipe(env, "minecraft:carrot_on_a_stick", false),
+            Ok(())
+        );
+        let rod_slot = menu.slot(1).expect("fishing rod in grid slot 1");
+        assert_eq!(rod_slot.item.as_ref(), "minecraft:fishing_rod");
+        assert_eq!(rod_slot.damage, 40);
+        assert_eq!(rod_slot.custom_name().as_deref(), Some("Lucky Rod"));
+        let carrot_slot = menu.slot(4).expect("carrot in grid slot 4");
+        assert_eq!(carrot_slot.item.as_ref(), "minecraft:carrot");
+        assert_eq!(carrot_slot.count, 1);
+        assert_eq!(menu.player_item(0), None);
+        assert_eq!(menu.player_item(1), None);
     });
 }
