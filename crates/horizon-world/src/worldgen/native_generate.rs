@@ -4,7 +4,9 @@
 use super::{
     biome::BiomeId,
     biome_chunk::BiomeChunk,
-    generator::{GenBlockStates, GeneratorData, SurfaceSample},
+    generator::{
+        GenBlockStates, GeneratorData, GeneratorError, GeneratorWorker, LodColumn, SurfaceSample,
+    },
     generator_structures::Starts,
     structure::start::StructureStart,
     terrain::TerrainChunk,
@@ -13,6 +15,7 @@ use crate::{
     heightmap::HeightmapState,
     registry::{BlockRegistry, BlockStateId},
 };
+use horizon_core::position::BlockPos;
 use std::sync::{Arc, OnceLock};
 
 /// What a native generator made of a chunk (`native_chunk_generate`).
@@ -227,31 +230,149 @@ fn lod_column(
     }
 }
 
-/// Ask `native_lod_column` about the far column `[x, z]` and put what a mod
-/// answers in place of vanilla's `sample` and `spans` (top down). Nothing
-/// changes when no mod answers.
-pub(super) fn far_column(
-    (dimension, seed, flat): (&str, i64, bool),
+/// True when native generation hooks are installed.
+pub fn has_lod_column_hook() -> bool {
+    HOOKS.get().is_some()
+}
+
+pub(super) fn surface_sample_worker(
+    worker: &mut GeneratorWorker,
+    x: i32,
+    z: i32,
+) -> Option<SurfaceSample> {
+    if has_lod_column_hook() {
+        let replaced = {
+            let mut out = NativeLodColumn {
+                data: worker.pipeline_data(),
+                replaced: None,
+            };
+            let (dimension, seed, flat) = worker.pipeline_context();
+            native_lod_column(dimension, [x, z], seed, flat, &mut out);
+            out.replaced
+        };
+        if let Some((runs, biome)) = replaced {
+            let known = worker.pipeline_data().biome_names().len();
+            let (runs, top, water) = prepare_mod_runs(worker.pipeline_data(), runs);
+            let fallback_biome = if biome.is_none() {
+                top.and_then(|(h, _)| worker.sample_zoomed_biome_id(BlockPos::new(x, h - 1, z)))
+            } else {
+                None
+            };
+            let (sample, _) = build_mod_column(known, runs, top, water, biome, fallback_biome);
+            return sample;
+        }
+    }
+    worker.sample_vanilla_surface(x, z, None)
+}
+
+pub(super) fn surface_column_worker(
+    worker: &mut GeneratorWorker,
+    x: i32,
+    z: i32,
+) -> (Option<SurfaceSample>, Vec<(i32, i32, BlockStateId)>) {
+    if has_lod_column_hook() {
+        let replaced = {
+            let mut out = NativeLodColumn {
+                data: worker.pipeline_data(),
+                replaced: None,
+            };
+            let (dimension, seed, flat) = worker.pipeline_context();
+            native_lod_column(dimension, [x, z], seed, flat, &mut out);
+            out.replaced
+        };
+        if let Some((runs, biome)) = replaced {
+            let known = worker.pipeline_data().biome_names().len();
+            let (runs, top, water) = prepare_mod_runs(worker.pipeline_data(), runs);
+            let fallback_biome = if biome.is_none() {
+                top.and_then(|(h, _)| worker.sample_zoomed_biome_id(BlockPos::new(x, h - 1, z)))
+            } else {
+                None
+            };
+            return build_mod_column(known, runs, top, water, biome, fallback_biome);
+        }
+    }
+    let mut spans = Vec::new();
+    let surface = worker.sample_vanilla_surface(x, z, Some(&mut spans));
+    (surface, spans)
+}
+
+pub(super) fn lod_grid_worker(
+    worker: &mut GeneratorWorker,
+    x: i32,
+    z: i32,
+    width: i32,
+    side: usize,
+    approximate: bool,
+) -> Result<Vec<LodColumn>, GeneratorError> {
+    if !has_lod_column_hook() {
+        return worker.sample_vanilla_lod_grid(x, z, width, side, approximate);
+    }
+    let total = side * side;
+    let mut pre_columns: Vec<Option<LodColumn>> = Vec::with_capacity(total);
+    let mut all_mod = true;
+    let mut any_mod = false;
+
+    for index in 0..total {
+        let column = [
+            x + (index % side) as i32 * width,
+            z + (index / side) as i32 * width,
+        ];
+        let replaced = {
+            let mut out = NativeLodColumn {
+                data: worker.pipeline_data(),
+                replaced: None,
+            };
+            let (dimension, seed, flat) = worker.pipeline_context();
+            native_lod_column(dimension, column, seed, flat, &mut out);
+            out.replaced
+        };
+        if let Some((runs, biome)) = replaced {
+            let known = worker.pipeline_data().biome_names().len();
+            let (runs, top, water) = prepare_mod_runs(worker.pipeline_data(), runs);
+            let fallback_biome = if biome.is_none() {
+                top.and_then(|(h, _)| {
+                    worker.sample_zoomed_biome_id(BlockPos::new(column[0], h - 1, column[1]))
+                })
+            } else {
+                None
+            };
+            let col = build_mod_column(known, runs, top, water, biome, fallback_biome);
+            pre_columns.push(Some(col));
+            any_mod = true;
+        } else {
+            pre_columns.push(None);
+            all_mod = false;
+        }
+    }
+
+    if all_mod {
+        return Ok(pre_columns.into_iter().map(Option::unwrap).collect());
+    }
+
+    let mut columns = worker.sample_vanilla_lod_grid(x, z, width, side, approximate)?;
+    if any_mod {
+        for (col, pre) in columns.iter_mut().zip(pre_columns) {
+            if let Some(pre) = pre {
+                *col = pre;
+            }
+        }
+    }
+    Ok(columns)
+}
+
+fn prepare_mod_runs(
     data: &GeneratorData,
-    column: [i32; 2],
-    sample: &mut Option<SurfaceSample>,
-    spans: Option<&mut Vec<(i32, i32, BlockStateId)>>,
+    mut runs: Vec<(i32, i32, BlockStateId)>,
+) -> (
+    Vec<(i32, i32, BlockStateId)>,
+    Option<(i32, BlockStateId)>,
+    Option<(i32, BlockStateId)>,
 ) {
-    let mut out = NativeLodColumn {
-        data,
-        replaced: None,
-    };
-    native_lod_column(dimension, column, seed, flat, &mut out);
-    let Some((mut runs, biome)) = out.replaced else {
-        return;
-    };
     let states = data.block_states();
     runs.retain(|&(min, max, state)| {
         min < max && data.registry().state(state).is_some() && !states.get(state).is_air()
     });
     runs.sort_by_key(|a| std::cmp::Reverse(a.0));
-    // As vanilla's sample reads a column down: the first block without a
-    // fluid is its top, and the fluid right over it its water.
     let mut water = None;
     let mut above = None;
     let mut top = None;
@@ -260,23 +381,34 @@ pub(super) fn far_column(
             water = None;
         }
         above = Some(min);
-        if states.get(state).has_fluid() {
+        let properties = states.get(state);
+        if properties.has_fluid() {
             water.get_or_insert((max, state));
         } else {
-            top = Some((max, state));
+            top.get_or_insert((max, state));
             break;
         }
     }
+    (runs, top, water)
+}
+
+fn build_mod_column(
+    known_biomes: usize,
+    runs: Vec<(i32, i32, BlockStateId)>,
+    top: Option<(i32, BlockStateId)>,
+    water: Option<(i32, BlockStateId)>,
+    biome: Option<BiomeId>,
+    fallback_biome: Option<BiomeId>,
+) -> LodColumn {
     let biome = biome
-        .or(sample.as_ref().map(|s| s.biome))
+        .filter(|&id| (id.0 as usize) < known_biomes)
+        .or(fallback_biome)
         .unwrap_or(BiomeId(0));
-    *sample = top.map(|(height, state)| SurfaceSample {
+    let sample = top.map(|(height, state)| SurfaceSample {
         height,
         state,
         water,
         biome,
     });
-    if let Some(spans) = spans {
-        *spans = runs;
-    }
+    (sample, runs)
 }

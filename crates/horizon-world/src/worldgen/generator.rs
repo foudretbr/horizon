@@ -32,7 +32,7 @@ use super::{
     material_extensions::{ExtensionBlocks, ExtensionNoises, MaterialExtensions},
     material_stage::{SurfaceInputs, TopMaterialInputs, build_surface_shared},
     material_surface::{ClayBandBlocks, MaterialSurface},
-    native_generate::{NativeGenerate, NativeProtoChunk, far_column, native_chunk_generate},
+    native_generate::{self, NativeGenerate, NativeProtoChunk, native_chunk_generate},
     overrides::{self, WorldgenOverrides},
     router::{NoiseRouter, RouterField, RouterSamplers},
     settings::NoiseSettings,
@@ -2618,6 +2618,7 @@ trait SeededPipeline: Send + Sync {
     ) -> Option<(String, [i32; 3])>;
     /// `BiomeSource.getNoiseBiome` at each quart position (unloaded chunks).
     fn noise_biomes(&self, worker: &mut WorkerState, quarts: &[[i32; 3]]) -> Vec<Option<String>>;
+    fn zoomed_biome(&self, worker: &mut WorkerState, block: BlockPos) -> Option<String>;
     fn jigsaw_pieces(
         &self,
         worker: &mut WorkerState,
@@ -3323,6 +3324,12 @@ where
             })
             .collect()
     }
+    fn zoomed_biome(&self, worker: &mut WorkerState, block: BlockPos) -> Option<String> {
+        self.noise_biomes(worker, &[self.zoom.quart_at_block(block)])
+            .into_iter()
+            .next()
+            .flatten()
+    }
     fn jigsaw_pieces(
         &self,
         worker: &mut WorkerState,
@@ -3823,16 +3830,7 @@ impl GeneratorWorker {
     }
     /// Noise/aquifer surface and its material rule, without chunks, structures or features.
     pub fn surface_sample(&mut self, x: i32, z: i32) -> Option<SurfaceSample> {
-        let mut sample = self.pipeline.surface_sample(&mut self.state, x, z, None);
-        let pipeline = &*self.pipeline;
-        far_column(
-            pipeline.native_context(),
-            pipeline.data(),
-            [x, z],
-            &mut sample,
-            None,
-        );
-        sample
+        native_generate::surface_sample_worker(self, x, z)
     }
     /// Noise/aquifer material runs, excluding air; bounds are half-open.
     /// Features and carvers still require generated chunks.
@@ -3841,19 +3839,7 @@ impl GeneratorWorker {
         x: i32,
         z: i32,
     ) -> (Option<SurfaceSample>, Vec<(i32, i32, BlockStateId)>) {
-        let mut spans = Vec::new();
-        let mut surface = self
-            .pipeline
-            .surface_sample(&mut self.state, x, z, Some(&mut spans));
-        let pipeline = &*self.pipeline;
-        far_column(
-            pipeline.native_context(),
-            pipeline.data(),
-            [x, z],
-            &mut surface,
-            Some(&mut spans),
-        );
-        (surface, spans)
+        native_generate::surface_column_worker(self, x, z)
     }
     /// `/locate structure`: the nearest start of one of `names`.
     pub fn locate(
@@ -3890,24 +3876,36 @@ impl GeneratorWorker {
         side: usize,
         approximate: bool,
     ) -> Result<Vec<LodColumn>, GeneratorError> {
-        let mut columns =
-            self.pipeline
-                .lod_grid(&mut self.state, x, z, width, side, approximate)?;
-        let pipeline = &*self.pipeline;
-        for (index, (sample, spans)) in columns.iter_mut().enumerate() {
-            let column = [
-                x + (index % side) as i32 * width,
-                z + (index / side) as i32 * width,
-            ];
-            far_column(
-                pipeline.native_context(),
-                pipeline.data(),
-                column,
-                sample,
-                Some(spans),
-            );
-        }
-        Ok(columns)
+        native_generate::lod_grid_worker(self, x, z, width, side, approximate)
+    }
+    pub(super) fn pipeline_context(&self) -> (&str, i64, bool) {
+        self.pipeline.native_context()
+    }
+    pub(super) fn pipeline_data(&self) -> &GeneratorData {
+        self.pipeline.data()
+    }
+    pub(super) fn sample_vanilla_surface(
+        &mut self,
+        x: i32,
+        z: i32,
+        spans: Option<&mut Vec<(i32, i32, BlockStateId)>>,
+    ) -> Option<SurfaceSample> {
+        self.pipeline.surface_sample(&mut self.state, x, z, spans)
+    }
+    pub(super) fn sample_vanilla_lod_grid(
+        &mut self,
+        x: i32,
+        z: i32,
+        width: i32,
+        side: usize,
+        approximate: bool,
+    ) -> Result<Vec<LodColumn>, GeneratorError> {
+        self.pipeline
+            .lod_grid(&mut self.state, x, z, width, side, approximate)
+    }
+    pub(super) fn sample_zoomed_biome_id(&mut self, pos: BlockPos) -> Option<BiomeId> {
+        let name = self.pipeline.zoomed_biome(&mut self.state, pos)?;
+        self.pipeline.data().biome_id(&name)
     }
     pub fn noise_biomes(&mut self, quarts: &[[i32; 3]]) -> Vec<Option<String>> {
         self.pipeline.noise_biomes(&mut self.state, quarts)
